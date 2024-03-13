@@ -1,0 +1,486 @@
+Program.Sub.Preflight.Start
+Program.External.Include.Library("7101.lib")
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+'does not work with customers using revs
+'assumes the location the allocation info is stored is the heat field
+
+'post exit stage shipment - 38422
+'
+V.Local.sSeq.Declare
+V.Local.sBin.Declare
+v.Local.sMessage.Declare
+v.Local.sFile.Declare
+v.Local.lPathLength.Declare
+v.Local.lPosition.Declare
+v.Local.sPath.Declare
+v.Local.sReturn.Declare
+V.Local.SLOTBINALLOCINFO.Declare
+v.Local.sNow.Declare
+
+'global
+V.Global.sErrorLog.Declare
+V.Global.sSerialNumber.Declare
+V.Global.sShipmentSequence.Declare
+V.Global.sPart.Declare
+V.Global.sLoc.Declare
+V.Global.sPackNo.Declare
+V.Global.sLine.Declare
+V.Global.sOrderNumber.Declare
+
+'End if no packing list was selected
+'could have a packing list but no staged shipment
+f.Intrinsic.Control.If(v.Passed.000006.Trim,=,"")
+	f.Intrinsic.Control.End
+f.Intrinsic.Control.EndIf
+
+'Check to see if user wants to auto allocate
+f.Intrinsic.UI.Msgbox("Do you want to auto allocate this shipment?","Auto Allocate",4,v.Local.sReturn)
+
+'end script if No was selected
+f.Intrinsic.Control.If(v.Local.sReturn,=,7)
+	f.Intrinsic.Control.End
+f.Intrinsic.Control.EndIf
+
+'Function.Intrinsic.Debug.InvokeDebugger
+'open connection
+f.ODBC.Connection!conx.openconnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass)
+
+'Invoke Wait Dialog
+f.Intrinsic.UI.InvokeWaitDialog("Auto Allocating...")
+
+'Call Subs
+F.Intrinsic.Control.CallSub("Get_Ship_Sequence")
+F.Intrinsic.Control.CallSub("LoopBDF")
+F.Intrinsic.Control.CallSub("LoopStageDT")
+
+'Post Error Log if any, notify user
+f.Intrinsic.Control.If(v.Global.sErrorLog.Trim,<>,"")
+	f.Intrinsic.String.Format(v.Ambient.Now,"yyyy-mm-dd--hhnnss",v.Local.sNow)
+	f.Intrinsic.String.Build("{0}\GAB_5188_AUTO_ALLOC_ERRLOG_{1}_{2}_{3}.txt",V.Caller.LocalGSSTempDir,V.Global.sPackNo,V.Caller.User,V.Local.sNow,V.Local.sFile)
+	f.Intrinsic.File.String2File(v.Local.sFile,v.Global.sErrorLog)
+	F.Intrinsic.Task.ShellExec(v.Caller.Handle,"OPEN",v.Local.sFile,"","",5)
+f.Intrinsic.Control.EndIf
+
+'Close Connection
+f.ODBC.Connection!conx.Close
+
+'Close Program
+f.Intrinsic.Control.End
+Program.Sub.Main.End
+
+Program.Sub.NonMultiPieceAllocation.Start
+'f.Intrinsic.UI.Msgbox("non multi piece allocation")
+Program.Sub.NonMultiPieceAllocation.End
+
+Program.Sub.Get_Ship_Sequence.Start
+V.Local.SSQL.Declare
+V.Local.SRETURN.Declare
+'ADD A CHECK TO MAKE SURE THEY'VE CLICKED THE SAVE BUTTON AND THAT THE RECORDS EXIST IN THE SHIPMENTS_HEADER TABLE
+'and GRAB THE SHIPMENT SEQUENCE NUMBER WHILE WE ARE AT IT
+V.Global.sPackNo.Set(V.Passed.000006)
+F.Intrinsic.String.LPad(V.Global.sPackNo,"0",7,V.Global.sPackNo)
+F.ODBC.Connection!CONCHECKSAVE.OPENCONNECTION(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+F.Intrinsic.String.Build("SELECT RIGHT(ORDER_SUFFIX,3) FROM V_SHIPMENT_HEADER WHERE PCK_NO = '{0}';",V.Global.sPackNo,V.Local.sSQL)
+F.ODBC.Connection!CONCHECKSAVE.EXECUTEANDRETURN(V.Local.sSQL,V.Local.sReturn)
+F.ODBC.Connection!CONCHECKSAVE.Close
+F.Intrinsic.Control.If(V.Local.sReturn,=,"***NORETURN***")
+	F.Intrinsic.UI.Msgbox("Must save prior to auto allocating!")
+	f.Intrinsic.Control.End
+F.Intrinsic.Control.ElseIf(V.Local.sReturn.Trim,=,"")
+	F.Intrinsic.UI.Msgbox("Must save prior to auto allocating!")
+	f.Intrinsic.Control.End	
+F.Intrinsic.Control.EndIf
+'set shipment sequence number
+v.Global.sShipmentSequence.Set(v.Local.SRETURN)
+Program.Sub.Get_Ship_Sequence.End
+
+Program.Sub.LoopBDF.Start
+V.Local.iRows.Declare
+v.Local.sRow.Declare
+v.Local.iCount.Declare
+v.Local.sSQL.declare
+v.Local.sReturn.Declare
+v.Local.sFile.Declare
+
+'Load/cloan the BDF
+F.Intrinsic.BDF.Load("AUX001","AUX001")
+
+'get the number of rows in the grid/BDF
+f.Intrinsic.BDF.ReadRowCount("AUX001",V.Local.iRows)
+
+'subtract 1 from rows for the For loop
+f.Intrinsic.Math.Sub(v.Local.iRows,1,v.Local.iRows)
+f.Intrinsic.Control.For(v.Local.iCount,0,V.Local.iRows,1)
+
+	f.Intrinsic.UI.ChangeWaitStatus("Auto Allocating...",v.Local.iCount,0,v.Local.iRows)
+
+	f.Intrinsic.BDF.ReadRow("AUX001",v.Local.iCount,V.Local.sRow)
+	f.Intrinsic.Control.If(v.Local.iCount,=,0)
+		f.Intrinsic.String.Build("{0}",v.Local.sRow,v.Local.sFile)
+	f.Intrinsic.Control.Else
+		f.Intrinsic.String.Build("{0}{1}{2}",v.Local.sFile,v.Ambient.NewLine,v.Local.sRow,v.Local.sFile)
+	f.Intrinsic.Control.EndIf
+
+f.Intrinsic.Control.Next(v.Local.iCount)
+
+
+f.Data.DataTable.CreateFromString("dtStagedData",v.Local.sFile,"Select*!*Order*!*Line*!*Text*!*Part_Number*!*Loc*!*Promise_Date*!*Order_Qty*!*Staged_Qty*!*Schedule*!*Allocated*!*Allocate*!*Unpacked_Qty*!*BO_Qty*!*Available_Qty*!*UM*!*Part_Weight*!*# Cartons*!*Per_Carton*!*Carton_Weight*!*Carton_Code*!*No_Pallets*!*Per_Pallet*!*Pallet_Weight*!*Pallet_Code","String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String","|~|",v.Ambient.NewLine,True)
+
+'Accounts for the change in the stage shipments BDF in 2018.1
+'f.Data.DataTable.CreateFromString("dtStagedData",v.Local.sFile,"Select*!*Order*!*Line*!*Text*!*Part_Number*!*Loc*!*Promise_Date*!*Order_Qty*!*Staged_Qty*!*Schedule*!*Allocated*!*Allocate*!*Unpacked_Qty*!*BO_Qty*!*Available_Qty*!*UM*!*Part_Weight*!*# Cartons*!*Per_Carton*!*Carton_Weight*!*Carton_Code*!*No_Pallets*!*Per_Pallet*!*Pallet_Weight*!*Pallet_Code*!*In_Staging","String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String*!*String","|~|",v.Ambient.NewLine,True)
+Program.Sub.LoopBDF.End
+
+Program.Sub.MultiPieceAllocation.Start
+'******OLD CODE - NO LONGER IN USE AS OF 06-26-18*****************
+
+'v.Local.sSQL.declare
+'v.Local.sReturn.Declare
+'v.Local.sMessage.Declare
+'v.Local.sSerial.Declare
+'v.Local.sTRUCKBIN.Declare
+'v.Local.sParams.Declare
+'V.Local.iCount.Declare
+'v.Local.sDTtemp.Declare
+'V.Local.sFile.Declare
+'v.Local.sFileDateTime.Declare
+
+''check to see what serial number needs to be selected
+'f.ODBC.Connection!conlotbin.openconnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass)
+'f.Intrinsic.String.Build("SELECT RTRIM(USER_2) + '-' + RTRIM(USER_3) AS SERIAL_NUM FROM V_ORDER_LINES WHERE ORDER_NO = '{0}' AND RECORD_NO = '{1}';",V.Global.sOrder,v.Global.sLine,v.Local.sSQL)
+'f.ODBC.Connection!conlotbin.executeandreturn(v.Local.sSQL,V.Local.sSerial)
+'f.ODBC.Connection!conlotbin.close
+''f.Intrinsic.String.Split(v.Local.sReturn,"*!*",v.Local.sReturn)
+
+''set the serial number to be length(ft)-length(in)
+''f.Intrinsic.String.Concat(v.Local.sReturn(0),"-",v.Local.sReturn(1),v.Local.sSerial)
+
+''LOOK FOR A LOT/BIN RECORD THAT HAS THE ORDER-LINE NUMBER IN THE USER_1 FIELD ON THE ITEM MASTER
+''need to see if it is in the truck(ship via) specific bin
+'f.ODBC.Connection!conlotbin.openconnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass)
+''GRAB THE BIN LOCATION ASSOCIATED WITH THE SHIP VIA
+''not going to worry about bin for now
+'F.Intrinsic.String.Build("SELECT TOP 1 BIN FROM V_ITEM_MASTER WHERE PART = '{0}' AND LOCATION = '{1}' AND SERIAL_NUMBER = '{2}';",V.Global.sPart,v.Global.sLoc,v.Local.sSerial,v.Local.sSQL)
+'F.ODBC.Connection!conlotbin.EXECUTEANDRETURN(V.Local.sSQL,v.Local.STRUCKBIN)
+
+''CHECK TO SEE IF A BIN EXISTS FOR THE SPECIFIED SHIP VIA
+''v.Local.sTRUCKBIN.Set("WSM1")
+'F.Intrinsic.Control.If(v.Local.STRUCKBIN,=,"***NORETURN***")
+'	F.Intrinsic.String.Build("Line: {2} Part: {0} Loc: {1} is not in a bin location. Will not auto allocate.",v.Global.sPart,V.Global.sLoc,v.Global.sLine,v.Local.sMessage)
+'	f.Intrinsic.UI.Msgbox(v.Local.sMessage)
+'	v.Global.sTemp(0).Set("N")
+'	F.Intrinsic.Control.ExitSub
+'F.Intrinsic.Control.Else
+'	'don't need bin for now
+''	f.Intrinsic.String.Build("SELECT QTY_AVAILABLE_SHIP FROM V_ITEM_MASTER WHERE PART = '{0}' AND LOCATION = '{1}' AND SERIAL_NUMBER = '{2}' AND BIN = '{3}';",V.Global.sPart,v.Global.sLoc,v.Local.sSerial,V.Local.STRUCKBIN,v.Local.sSQL)
+'	f.Intrinsic.String.Build("SELECT sum(QTY_AVAILABLE_SHIP) FROM V_ITEM_MASTER WHERE PART = '{0}' AND LOCATION = '{1}' AND SERIAL_NUMBER = '{2}';",V.Global.sPart,v.Global.sLoc,v.Local.sSerial,v.Local.sSQL)
+'	f.ODBC.Connection!conlotbin.executeandreturn(v.Local.sSQL,v.Local.sReturn)
+'	F.ODBC.Connection!conlotbin.Close
+'	'CHECK TO SEE IF THE QTY_AVAILABLE_SHIP IS ENOUGH TO FILL LINE
+'	F.Intrinsic.Control.If(V.Local.sReturn,<,V.Global.sAllocQty)
+'		f.Intrinsic.String.Build("Line: {2} Part: {0} Loc: {1} does not have enough qty available to ship. Will not auto allocate.",v.Global.sPart,V.Global.sLoc,v.Global.sLine,v.Local.sMessage)
+'		f.Intrinsic.UI.Msgbox(v.Local.sMessage)
+'		V.Global.sTemp(0).Set("N")
+'		F.Intrinsic.Control.ExitSub
+'		'NEED TO WRITE TO ERROR LOG			
+'	'there is enough quantity on hand - proceed with allocation.
+'	f.Intrinsic.Control.Else
+'		'v.Local.sBin.set(V.Local.STRUCKBIN)
+'		V.Global.sTemp(10).Set(V.Global.sAllocQty)
+'		V.Global.sTemp(11).Set("Edit")
+'		
+'		'Build callwrapper params - Allocate Callwrapper
+'		'CallWrapperSync(7100,"R!*!PART(17)!*!REV(3)!*!QTY_TO_ALLOCATE!*!ORDER_NO(0000000)!*!LINE(001)!*!LOT!*!BIN!*!HEAT!*!SERIAL
+'		f.Intrinsic.String.Build("R!*!{0}!*!!*!{1}!*!{2}!*!{3}!*!{4}!*!!*!{5}!*!!*!{6}",v.Global.sPart,v.Global.sLoc,v.Global.sAllocQty,v.Global.sOrder,v.Global.sTemp(2),v.Local.sTRUCKBIN,v.Local.sSerial,v.Local.sParams)
+'		f.Global.General.CallWrapperSync(7100,v.Local.sParams)
+'		
+''************************************************************************************************************************************
+''		Need to change heat to be order-sequenc-line instead of order-line and the allocation type to T
+'		f.ODBC.Connection!conUpdateAllocation.openconnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass)
+'		F.Intrinsic.String.Build("SELECT * FROM ITEM_MASTER WHERE PART = '{2}' AND LOCATION = '{3}' AND HEAT = '{0}-{1}' AND ALLOCATED = 'Y' AND ALLOC_TYPE = 'S';",V.Global.sOrder,V.Global.sTemp(2),v.Global.sPart,v.Global.sLoc,v.Local.sSQL)
+'		
+'		'pull all relevant item master data into datatable for update
+'		F.Data.DataTable.CreateFromSQL("dtAllocation","conUpdateAllocation",v.Local.sSQL)
+'		
+'		'trim the heat field
+'		f.Intrinsic.Control.For(v.Local.iCount,0,v.DataTable.dtAllocation.RowCount--,1)
+'			v.Local.sDTtemp.Set(v.DataTable.dtAllocation(0).HEAT!FIELDVALRTRIM)
+'			F.Data.DataTable.SetValue("dtAllocation",V.Local.iCount,"HEAT",V.Local.sDTtemp)
+'		f.Intrinsic.Control.Next(v.Local.iCount)
+'		
+'		'Function.Intrinsic.Debug.Stop
+'		'prior to saving DT to DB, delete rows from item_master, BETTER NOT HAVE SCREWED UP, prior to that, save DT to file incase we did screw up and need to revert back.
+'		f.Intrinsic.String.Format(v.Ambient.Now,"yyyy-mm-dd--hhnnss",v.Local.sFileDateTime)
+'		f.Intrinsic.String.Build("{0}\Auto Allocation Log\{1}--{2}--{3}-{4}-{5}.txt",v.Caller.FilesDir,v.Caller.User,v.Local.sFileDateTime,v.Global.sOrder,v.Global.sShipmentSequence,v.Global.sLine,v.Local.sFile)
+'		f.Data.DataTable.SaveToCSV("dtAllocation",v.Local.sFile,True)
+'		
+'		'CREATE DICTIONARY FROM SQL, HEAT COLUMN WILL BE ORDER-LINE, ORDER_SEQ_LINE COLUMN WILL BE NEW ALLOCATION KEY VALUE
+'		F.Intrinsic.String.Build("SELECT ORDER_NO + '-' + LEFT(LINE,3) AS HEAT, ORDER_NO + '-' + RIGHT(SEQ,3) + '-' + LEFT(LINE,3) AS ORDER_SEQ_LINE FROM V_STAGING_QUANTITY WHERE PCK_NO = '{0}' AND SEQ = '0{1}';",V.Global.sPackNo,V.Global.sShipmentSequence,V.Local.sSQL)
+'		'create dictionary
+'		f.Data.Dictionary.CreateFromSQL("dAllocTypeChange","conUpdateAllocation",v.Local.sSQL)
+'		
+'		f.Intrinsic.Control.For(v.Local.iCount,0,v.DataTable.dtAllocation.RowCount--,1)
+'			F.Intrinsic.String.Build("DELETE FROM ITEM_MASTER WHERE PART = '{0}' AND LOCATION = '{1}' AND LOT = '{2}' AND BIN = '{3}' AND HEAT = '{4}' AND SERIAL_NUMBER = '{5}';",v.DataTable.dtAllocation(V.Local.iCount).PART!FIELDVALRTRIM,v.DataTable.dtAllocation(V.Local.iCount).LOCATION!FIELDVALRTRIM,v.DataTable.dtAllocation(V.Local.iCount).LOT!FIELDVALRTRIM,v.DataTable.dtAllocation(V.Local.iCount).BIN!FIELDVALRTRIM,v.DataTable.dtAllocation(V.Local.iCount).HEAT!FIELDVALRTRIM,v.DataTable.dtAllocation(V.Local.iCount).SERIAL_NUMBER!FIELDVALRTRIM,v.Local.ssql)
+'			f.ODBC.Connection!conUpdateAllocation.execute(v.Local.sSQL)
+'		f.Intrinsic.Control.Next(v.Local.iCount)
+'		
+'		'UPDATE DATATABLE FROM DICTIONARY, EZ PZ
+'		F.Data.DataTable.FillFromDictionary("dtAllocation","dAllocTypeChange","HEAT")
+'		
+'		'SET ALLOCATION TYPE TO 'T'
+'		F.Data.DataTable.SetValue("dtAllocation",-1,"ALLOC_TYPE","T")
+'		
+'		'save records back to DB
+'		f.Data.DataTable.SaveToDB("dtAllocation","conUpdateAllocation","ITEM_MASTER","PART*!*LOCATION*!*LOT*!*BIN*!*HEAT*!*SERIAL_NUMBER",2)
+'		
+'		'Close DT and Dict
+'		F.Data.Dictionary.Close("dAllocTypeChange")
+'		f.Data.DataTable.Close("dtAllocation")
+'		
+'		'CLOSE CONNECTION
+'		f.ODBC.Connection!conUpdateAllocation.Close
+''************************************************************************************************************************************
+''	Close IF - check to see if there is enough quantity available to ship
+'	f.Intrinsic.Control.EndIf
+''Close IF - check IF TRUCK BIN EXISTS	
+'F.Intrinsic.Control.EndIf
+Program.Sub.MultiPieceAllocation.End
+
+Program.Sub.LoopStageDT.Start
+v.Local.icount.Declare
+v.Local.sSQL.Declare
+V.Local.sReturn.Declare
+
+'Loop through DT
+f.Intrinsic.Control.For(v.Local.icount,0,v.DataTable.dtStagedData.RowCount--,1)
+	'Check to see if they're staging it
+	f.Intrinsic.Control.If(v.DataTable.dtStagedData(v.Local.icount).Select!FieldValRtrim,=,"Y")
+		'check to see if it's already fully staged
+		f.Intrinsic.Control.If(v.DataTable.dtStagedData(v.Local.icount).Staged_Qty!FieldVal,<>,v.DataTable.dtStagedData(v.Local.icount).Allocated!FieldVal)
+			'check order lines user 1 field to see if it's multi piece, also grab the Serial (user2-user3) to use in entire script
+			f.Intrinsic.String.Build("SELECT RTRIM(USER_1), CONCAT(RTRIM(USER_2),CONCAT('-',RTRIM(USER_3))) FROM V_ORDER_LINES WHERE ORDER_NO = '{0}' AND RECORD_NO = '{1}0';",v.DataTable.dtStagedData(v.Local.icount).ORDER!FieldValRtrim,v.DataTable.dtStagedData(v.Local.icount).LINE!FieldValRtrim,V.Local.sSQL)
+			v.Global.sOrderNumber.set(v.DataTable.dtStagedData(v.Local.icount).ORDER!FieldValRtrim)
+			v.Global.sLine.Set(v.DataTable.dtStagedData(v.Local.icount).LINE!FieldValRtrim)
+			v.Global.sPart.Set(v.DataTable.dtStagedData(v.local.icount).Part_Number!FieldValRtrim)
+			f.ODBC.Connection!conx.executeandreturn(v.Local.sSQL,v.Local.sReturn)
+			F.Intrinsic.String.Split(V.Local.sReturn,"*!*",V.Local.sReturn)
+			V.Global.sSerialNumber.Set(v.Local.sReturn(1))
+			'There is a value in the piece field so it's multi piece
+			f.Intrinsic.Control.If(v.Local.sReturn(0),<>,"")
+				f.Intrinsic.Control.CallSub("Build_Unallocate_string_multi_piece","iCount",v.Local.icount)
+			f.Intrinsic.Control.Else	
+				f.Intrinsic.Control.CallSub("Build_Unallocate_string_non_multi_piece","iCount",v.Local.icount)
+			f.Intrinsic.Control.EndIf
+		f.Intrinsic.Control.EndIf
+	f.Intrinsic.Control.EndIf
+f.Intrinsic.Control.Next(v.Local.icount)
+Program.Sub.LoopStageDT.End
+
+Program.Sub.Build_Unallocate_string_multi_piece.Start
+'Notes
+'8/21/18: Had to split part into part and rev
+
+v.Local.sSQL.Declare
+v.Local.sReturn.Declare
+V.Local.sErrorType.Declare
+v.Local.fTemp.Declare
+v.Local.sPart.Declare
+v.Local.sRev.Declare
+v.Local.sPartNoRev.Declare
+v.Local.sLocation.Declare
+v.Local.sBin.Declare
+v.Local.sLot.Declare
+v.Local.sHeat.Declare
+v.Local.sSerial.Declare
+v.Local.sQty.Declare
+v.Local.sQtyAvailShip.Declare
+v.Local.sUser7.Declare
+v.Local.iCount.Declare
+v.Local.sParams.Declare
+v.Local.fStagedQty.Declare
+
+'check to see if item master record is allocated to sales order
+F.Intrinsic.String.Build("SELECT COUNT(1) FROM V_ITEM_MASTER WHERE HEAT = '{0}-{1}' AND Quantity <> 0",V.DataTable.dtStagedData(v.Args.iCount).ORDER!FieldValRtrim,V.DataTable.dtStagedData(v.Args.iCount).LINE!FieldValRtrim,V.Local.sSQL)
+f.ODBC.Connection!conx.executeandreturn(v.Local.sSQL,v.Local.sReturn)
+F.Intrinsic.Control.If(V.Local.sReturn,>,0)
+'Yes
+	'CHECK TO SEE IF QTY IS ENOUGH FOR CORRECT SERIAL NUMBER
+	F.Intrinsic.String.Build("SELECT Part, Location, Lot, Bin, Heat, Serial_Number, Quantity, User_Field_7, Qty_Available_Ship FROM ITEM_MASTER WHERE HEAT = '{0}-{1}' AND SERIAL_NUMBER = '{2}' AND Quantity <> 0;",V.DataTable.dtStagedData(v.Args.iCount).ORDER!FieldValRtrim,V.DataTable.dtStagedData(v.Args.iCount).LINE!FieldValRtrim,V.Global.sSerialNumber,V.Local.sSQL)
+	f.Intrinsic.Control.If(v.DataTable.dtItemMasterInfo.Exists)
+		f.Data.DataTable.Close("dtItemMasterInfo")
+	f.Intrinsic.Control.EndIf
+	f.Data.DataTable.CreateFromSQL("dtItemMasterInfo","conx",v.Local.sSQL,True)
+	Function.Data.DataTable.Compute("dtItemMasterInfo","SUM(QTY_AVAILABLE_SHIP)",,V.Local.fTemp)
+	v.Local.fStagedQty.Set(V.DataTable.dtStagedData(v.Args.iCount).Staged_Qty!FieldValFloat)
+	F.Intrinsic.Control.If(v.Local.fStagedQty,=,V.Local.fTemp)
+		'Yes
+		'Continue
+		'Build the allocate DT
+		f.Intrinsic.Control.If(v.DataTable.dtAllocateInfo.Exists)
+			f.Data.DataTable.Close("dtAllocateInfo")
+		f.Intrinsic.Control.EndIf
+		f.Data.DataTable.Clone("dtItemMasterInfo","dtAllocateInfo",True)
+		f.Data.DataTable.Merge("dtItemMasterInfo","dtAllocateInfo",False,2)
+		'use CW 7101.lib to delete allocation
+		v.Local.sPart.Set(V.DataTable.dtStagedData(v.Args.iCount).Part_Number!FieldValRtrim)
+		f.Intrinsic.String.Left(v.Local.sPart,17,v.Local.sPartNoRev)
+		f.Intrinsic.String.Mid(v.Local.sPart,18,3,v.Local.sRev)
+		F.Data.DataTable.AddRow("7101","Type","S","Part",v.Local.sPartNoRev,"Rev",v.Local.sRev,"Loc",V.DataTable.dtStagedData(v.Args.iCount).Loc!FieldValRtrim,"OrderQty","","SO",V.DataTable.dtStagedData(v.Args.iCount).ORDER!FieldValRtrim,"SOLine",V.DataTable.dtStagedData(v.Args.iCount).LINE!FieldValRtrim,"Lot","","Bin","","Heat","","Serial","","Action","D")
+		f.Intrinsic.Control.CallSub(7101Sync)
+		f.Intrinsic.Control.CallSub("Write_Mobile_Staging_Record")
+	f.Intrinsic.Control.Else
+		'No
+			'ErrorLog
+		v.Local.sErrorType.Set("CURRENT ALLOCATED QTY/STAGED QTY MISMATCH")
+		F.Intrinsic.String.Build("{6}ORDER:{0}{2}LINE:{3}{2}SHIP SEQ:{1}{2}ERROR TYPE:{4}{5}",V.DataTable.dtStagedData(v.Args.iCount).ORDER!FieldValRtrim,v.Global.sShipmentSequence,V.Ambient.Tab,V.DataTable.dtStagedData(v.Args.iCount).LINE!FieldValRtrim,V.Local.sErrorType,v.Ambient.NewLine,v.Global.sErrorLog,v.Global.sErrorLog)
+	f.Intrinsic.Control.EndIf
+f.Intrinsic.Control.Else
+'	'No
+	'ErrorLog
+	v.Local.sErrorType.Set("NO S/O ALLOCATED RECORDS FOUND")
+	F.Intrinsic.String.Build("{6}ORDER:{0}{2}LINE:{3}{2}SHIP SEQ:{1}{2}ERROR TYPE:{4}{5}",V.DataTable.dtStagedData(v.Args.iCount).ORDER!FieldValRtrim,v.Global.sShipmentSequence,V.Ambient.Tab,V.DataTable.dtStagedData(v.Args.iCount).LINE!FieldValRtrim,V.Local.sErrorType,v.Ambient.NewLine,v.Global.sErrorLog,v.Global.sErrorLog)
+F.Intrinsic.Control.EndIf
+Program.Sub.Build_Unallocate_string_multi_piece.End
+
+Program.Sub.Build_Unallocate_string_non_multi_piece.Start
+'Notes
+'8/21/18: Had to split part into part and rev
+
+v.Local.sSQL.Declare
+v.Local.sReturn.Declare
+V.Local.sErrorType.Declare
+v.Local.fTemp.Declare
+v.Local.sPart.Declare
+v.Local.sPartNoRev.Declare
+v.Local.sRev.Declare
+v.Local.sLocation.Declare
+v.Local.sBin.Declare
+v.Local.sLot.Declare
+v.Local.sHeat.Declare
+v.Local.sSerial.Declare
+v.Local.sQty.Declare
+v.Local.sQtyAvailShip.Declare
+v.Local.sUser7.Declare
+v.Local.iCount.Declare
+v.Local.fStagedQty.Declare
+v.Local.sx.Declare
+
+'check to see if item master record is allocated to sales order
+F.Intrinsic.String.Build("SELECT COUNT(1) FROM V_ITEM_MASTER WHERE HEAT = '{0}-{1}' AND Quantity <> 0",V.DataTable.dtStagedData(v.Args.iCount).ORDER!FieldValRtrim,V.DataTable.dtStagedData(v.Args.iCount).LINE!FieldValRtrim,V.Local.sSQL)
+f.ODBC.Connection!conx.executeandreturn(v.Local.sSQL,v.Local.sReturn)
+F.Intrinsic.Control.If(V.Local.sReturn,>,0)
+'Yes
+		'CHECK TO SEE IF QTY IS ENOUGH FOR CORRECT SERIAL NUMBER
+	F.Intrinsic.String.Build("SELECT Part, Location, Lot, Bin, Heat, Serial_Number, Quantity, User_Field_7, Qty_Available_Ship FROM ITEM_MASTER WHERE HEAT = '{0}-{1}' AND Quantity <> 0;",V.DataTable.dtStagedData(v.Args.iCount).ORDER!FieldValRtrim,V.DataTable.dtStagedData(v.Args.iCount).LINE!FieldValRtrim,V.Local.sSQL)
+	f.Intrinsic.Control.If(v.DataTable.dtItemMasterInfo.Exists)
+		f.Data.DataTable.Close("dtItemMasterInfo")
+	f.Intrinsic.Control.EndIf
+	f.Data.DataTable.CreateFromSQL("dtItemMasterInfo","conx",v.Local.sSQL,True)
+	Function.Data.DataTable.Compute("dtItemMasterInfo","SUM(QTY_AVAILABLE_SHIP)",,V.Local.fTemp)
+	v.Local.fStagedQty.Set(V.DataTable.dtStagedData(v.Args.iCount).Staged_Qty!FieldVal)
+	F.Intrinsic.Control.If(v.Local.fStagedQty,=,V.Local.fTemp)
+		'Continue
+		'Build the allocate DT
+		f.Intrinsic.Control.If(v.DataTable.dtAllocateInfo.Exists)
+			f.Data.DataTable.Close("dtAllocateInfo")
+		f.Intrinsic.Control.EndIf
+		f.Data.DataTable.Clone("dtItemMasterInfo","dtAllocateInfo",True)
+		f.Data.DataTable.Merge("dtItemMasterInfo","dtAllocateInfo",False,2)
+		'use CW 7101.lib to delete allocation
+		v.Local.sPart.Set(V.DataTable.dtStagedData(v.Args.iCount).Part_Number!FieldValRtrim)
+		f.Intrinsic.String.Left(v.Local.sPart,17,v.Local.sPartNoRev)
+		f.Intrinsic.String.Mid(v.Local.sPart,18,3,v.Local.sRev)
+		F.Data.DataTable.AddRow("7101","Type","S","Part",v.Local.sPartNoRev,"Rev",v.Local.sRev,"Loc",V.DataTable.dtStagedData(v.Args.iCount).Loc!FieldValRtrim,"OrderQty","","SO",V.DataTable.dtStagedData(v.Args.iCount).ORDER!FieldValRtrim,"SOLine",V.DataTable.dtStagedData(v.Args.iCount).LINE!FieldValRtrim,"Lot","","Bin","","Heat","","Serial","","Action","D")
+		f.Intrinsic.Control.CallSub(7101Sync)
+		f.Intrinsic.Control.CallSub("Write_Mobile_Staging_Record")
+	f.Intrinsic.Control.Else
+		'No
+			'ErrorLog
+		v.Local.sErrorType.Set("CURRENT ALLOCATED QTY/STAGED QTY MISMATCH")
+		F.Intrinsic.String.Build("{6}ORDER:{0}{2}LINE:{3}{2}SHIP SEQ:{1}{2}ERROR TYPE:{4}{5}",V.DataTable.dtStagedData(v.Args.iCount).ORDER!FieldValRtrim,v.Global.sShipmentSequence,V.Ambient.Tab,V.DataTable.dtStagedData(v.Args.iCount).LINE!FieldValRtrim,V.Local.sErrorType,v.Ambient.NewLine,v.Global.sErrorLog,v.Global.sErrorLog)
+	f.Intrinsic.Control.EndIf
+f.Intrinsic.Control.Else
+'No
+v.Local.sErrorType.Set("NO S/O ALLOCATED RECORDS FOUND")
+F.Intrinsic.String.Build("{6}ORDER:{0}{2}LINE:{3}{2}SHIP SEQ:{1}{2}ERROR TYPE:{4}{5}",V.DataTable.dtStagedData(v.Args.iCount).ORDER!FieldValRtrim,v.Global.sShipmentSequence,V.Ambient.Tab,V.DataTable.dtStagedData(v.Args.iCount).LINE!FieldValRtrim,V.Local.sErrorType,v.Ambient.NewLine,v.Global.sErrorLog,v.Global.sErrorLog)
+	'Look for unallocated item master record - Enough?
+		'Yes
+			'Multi-Bins
+			'Yes
+				'Try SA first
+				'Then order alpha numericly
+				'Use until they hit the limit
+				'Allocate s10
+			'No
+				'Allocate s10
+		'No
+			'ErrorLog
+F.Intrinsic.Control.EndIf
+Program.Sub.Build_Unallocate_string_non_multi_piece.End
+
+Program.Sub.Write_Mobile_Staging_Record.Start
+v.Local.sSQL.Declare
+v.Local.sReturn.Declare
+v.Local.lTransID.Declare
+V.Local.sToday.Declare
+v.Local.sTime.Declare
+v.Local.iCount.Declare
+V.Local.sNextTransID.Declare
+V.Local.sTransType.Declare
+
+
+'format date/time
+f.Intrinsic.String.Format(v.Ambient.Date,"YYYYMMDD",v.Local.sToday)
+f.Intrinsic.String.Format(v.Ambient.Now,"HHMMSS  ",v.Local.sTime)
+
+f.Intrinsic.Control.For(v.Local.iCount,0,v.DataTable.dtAllocateInfo.RowCount--,1)
+	'check to see if on first iteration of loop.  If so, then we will need to remove then add new (S30 then S10), else we need to add (S20 only)
+	f.Intrinsic.Control.If(v.Local.iCount,=,0)
+	'remove stage line
+		'set trans type
+		v.Local.sTransType.Set("S30")
+		'GET LAST TRANS ID, CREATE NEXT
+		v.Local.sSQL.Set("SELECT TOP 1 TRANS_ID FROM WIRELESS_HDR ORDER BY TRANS_ID DESC;")
+		f.ODBC.Connection!conx.executeandreturn(v.Local.sSQL,v.Local.sReturn)
+		F.Intrinsic.Math.ConvertToLong(V.Local.sReturn,V.Local.lTransID)
+		f.Intrinsic.Math.Add(v.Local.lTransID,1,v.Local.lTransID)
+		f.Intrinsic.String.LPad(v.Local.lTransID,"0",9,v.Local.sNextTransID)
+		'BUILD WIRELESS LINE INSERT STRING
+		'Packint List, Order, Line, Part, Location, Carton, Pallet, Qty, Lot, Bin, Heat, Serial, Error, Printed, Date Last Change, Time Last Change, Last Changed By
+		F.Intrinsic.String.Build("INSERT INTO WIRELESS_LINE (TRANS_ID,SEQ,TRANS_TYPE,FIELD_1,FIELD_2,FIELD_3,FIELD_4,FIELD_5,FIELD_6,FIELD_7,FIELD_8,FIELD_9,FIELD_10,FIELD_11,FIELD_12,ERROR_ID,PRINTED,DATE_LAST_CHG,TIME_LAST_CHG,LAST_CHG_BY) VALUES ('{0}','{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}','{10}','{11}','{12}','{13}','{14}','{15}','{16}','{17}','{18}','{19}')",v.Local.sNextTransID,"0000",v.Local.sTransType,V.Global.sPackNo,v.Global.sOrderNumber,v.Global.sLine,v.DataTable.dtAllocateInfo(v.Local.icount).Part!FieldValRtrim,v.DataTable.dtAllocateInfo(v.Local.icount).Location!FieldValRtrim,"","",v.DataTable.dtAllocateInfo(v.Local.icount).Quantity!FieldValRtrim,"","","","",0,"N",v.Local.sToday,v.Local.sTime,"GAB_5188",v.Local.sSQL)
+		f.ODBC.Connection!conx.execute(v.Local.sSQL)
+		
+		'BUILD WIRELESS HDR INSERT STRING
+		f.Intrinsic.String.Build("INSERT INTO WIRELESS_HDR (TRANS_ID,TRANS_TYPE,USER_ID,DATE_LAST_CHG,TIME_LAST_CHG,LAST_CHG_BY) VALUES ('{0}','{4}','{1}','{2}','{3}','GAB_5188');",V.Local.sNextTransID,V.Caller.User,V.Local.sToday,V.Local.sTime,v.Local.sTransType,v.Local.sSQL)
+		f.ODBC.Connection!conx.execute(v.Local.sSQL)
+		
+	'Check to see if Staging delete processed properly
+		'select successful_flag from wireless_hdr where trans_id = 'XXXXXXX', if succesful continue, else write to error log.
+		'$$$
+		
+		'set trans type to add if first iteration
+		v.Local.sTransType.Set("S10")	
+	f.Intrinsic.Control.Else
+		'set trans type to edit for all other iterations
+		v.Local.sTransType.Set("S20")
+	f.Intrinsic.Control.EndIf
+	
+'add back stage line with proper allocation
+	'next trans_id
+	f.Intrinsic.Math.Add(v.Local.lTransID,1,v.Local.lTransID)
+	f.Intrinsic.String.LPad(v.Local.lTransID,"0",9,v.Local.sNextTransID)
+	'BUILD WIRELESS LINE INSERT STRING
+	F.Intrinsic.String.Build("INSERT INTO WIRELESS_LINE (TRANS_ID,SEQ,TRANS_TYPE,FIELD_1,FIELD_2,FIELD_3,FIELD_4,FIELD_5,FIELD_6,FIELD_7,FIELD_8,FIELD_9,FIELD_10,FIELD_11,FIELD_12,FIELD_13,FIELD_14,FIELD_15,FIELD_16,FIELD_17,FIELD_18,FIELD_19,FIELD_20,FIELD_21,FIELD_22,FIELD_23,FIELD_24,FIELD_25,ERROR_ID,PRINTED,DATE_LAST_CHG,TIME_LAST_CHG,LAST_CHG_BY) VALUES ('{0}','{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}','{10}','{11}','{12}','{13}','{14}','{15}','{16}','{17}','{18}','{19}','{20}','{21}','{22}','{23}','{24}','{25}','{26}','{27}','{28}','{29}','{30}','{31}','{32}')",v.Local.sNextTransID,"0000",v.Local.sTransType,V.Global.sPackNo,v.Global.sOrderNumber,v.Global.sLine,v.DataTable.dtAllocateInfo(v.Local.icount).Part!FieldValRtrim,v.DataTable.dtAllocateInfo(v.Local.icount).Location!FieldValRtrim,v.DataTable.dtAllocateInfo(v.Local.icount).Lot!FieldValRtrim,v.DataTable.dtAllocateInfo(v.Local.icount).Bin!FieldValRtrim,"",v.DataTable.dtAllocateInfo(v.Local.icount).Serial_Number!FieldValRtrim,"","","","",v.DataTable.dtAllocateInfo(v.Local.icount).Quantity!FieldValRtrim,"","","","","","","","N","N","N",0,0,"N",v.Local.sToday,v.Local.sTime,"GAB_5188",v.Local.sSQL)
+	f.ODBC.Connection!conx.execute(v.Local.sSQL)
+	
+	'BUILD WIRELESS HDR INSERT STRING
+	f.Intrinsic.String.Build("INSERT INTO WIRELESS_HDR (TRANS_ID,TRANS_TYPE,USER_ID,DATE_LAST_CHG,TIME_LAST_CHG,LAST_CHG_BY) VALUES ('{0}','{4}','{1}','{2}','{3}','GAB_5188');",V.Local.sNextTransID,V.Caller.User,V.Local.sToday,V.Local.sTime,v.Local.sTransType,v.Local.sSQL)
+	f.ODBC.Connection!conx.execute(v.Local.sSQL)
+	
+'Check to see if Staging add processed properly
+	'select successful_flag from wireless_hdr where trans_id = 'XXXXXXX', if succesful continue, else write to error log.
+	'$$$
+
+f.Intrinsic.Control.Next(v.Local.iCount)
+Program.Sub.Write_Mobile_Staging_Record.End
